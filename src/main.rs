@@ -1,7 +1,7 @@
 use lilv_sys::*;
-use std::ffi::{ CString, CStr };
-use std::os::raw::c_char;
-use std::str;
+use std::ffi::{ CStr };
+use std::ptr;
+use std::ffi;
 // find plugins in /usr/lib/lv2
 // URI list with lv2ls
 // https://docs.rs/lilv-sys/0.2.1/lilv_sys/index.html
@@ -19,11 +19,61 @@ fn main() {
         let plugin = lilv_plugins_get_by_uri(plugins, uri);
         lilv_node_free(uri);
         println!("{:?}", plugin); // bruh moment: if i dont print this plugin evaluates to 0x0 but if i do it's a value and it's fine.
-        let (ports, n_audio_in, n_audio_out) = create_ports(world, plugin);
+        let (mut ports, n_audio_in, n_audio_out) = create_ports(world, plugin);
         if n_audio_in != 2 || n_audio_out != 2 {
             panic!("TermDaw: plugin audio input and output ports must be 2. \n\t Audio input ports: {}, Audio output ports: {}", n_audio_in, n_audio_out);
         }
 
+        let mut in_buf = [0.0f32; 2];
+        let out_buf = [0.0f32; 2];
+        let instance = lilv_plugin_instantiate(plugin, 44100.0, ptr::null_mut());
+        let (mut i, mut o) = (0, 0);
+        for p in &mut ports{
+            match p.ptype{
+                PortType::Control => {
+                    lilv_instance_connect_port(instance, p.index, &mut p.value as *mut f32 as *mut ffi::c_void);
+                },
+                PortType::Audio => {
+                    if p.is_input {
+                        lilv_instance_connect_port(instance, p.index, in_buf.as_ptr().offset(i) as *mut ffi::c_void);
+                        i += 1;
+                    } else {
+                        lilv_instance_connect_port(instance, p.index, out_buf.as_ptr().offset(o) as *mut ffi::c_void);
+                        o += 1;
+                    }
+                },
+                PortType::Other => {
+                    lilv_instance_connect_port(instance, p.index, ptr::null_mut());
+                }
+            }
+        }
+
+        let args: Vec<String> = std::env::args().collect();
+        let file = &args[1];
+        let mut reader = hound::WavReader::open(file).expect("TermDaw: could not open audio file.");
+        let specs = reader.spec();
+        let mut writer = hound::WavWriter::create("outp.wav", specs).unwrap();
+
+        lilv_instance_activate(instance);
+
+        let mut x = 0;
+        for s in reader.samples::<i16>(){
+            if s.is_err() { continue; }
+            let s = s.unwrap();
+            in_buf[x] = s as f32 / i16::MAX.abs() as f32;
+            x += 1;
+            if x == 2 {
+                x = 0;
+                lilv_instance_run(instance, 1);
+                writer.write_sample((out_buf[0] * i16::MAX.abs() as f32) as i16)
+                    .expect("Error: could not write sample");
+                writer.write_sample((out_buf[1] * i16::MAX.abs() as f32) as i16)
+                    .expect("Error: could not write sample");
+            }
+        }
+
+        lilv_instance_deactivate(instance);
+        lilv_instance_free(instance);
         lilv_world_free(world);
     }
     println!("I didn't crash!");
@@ -47,8 +97,8 @@ struct Port{
 // ([ports], n_audio_in, n_audio_out)
 unsafe fn create_ports(world: *mut LilvWorld, plugin: *const LilvPluginImpl) -> (Vec<Port>, usize, usize){
     println!("{:?}", plugin); // this checks if our weird ass pointer becomes 0x0 or not
-    if world == std::ptr::null_mut() { panic!("TermDaw: create_ports: world is null."); }
-    if plugin == std::ptr::null_mut() { panic!("TermDaw: create_ports: plugin is null."); }
+    if world.is_null() { panic!("TermDaw: create_ports: world is null."); }
+    if plugin.is_null() { panic!("TermDaw: create_ports: plugin is null."); }
 
     let mut ports = Vec::new();
     let mut n_audio_in = 0;

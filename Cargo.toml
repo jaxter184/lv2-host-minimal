@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 lilv-sys = "0.2.1"
+hound = "3.4.0"
