@@ -4,11 +4,8 @@ use crate::lv2::*;
 fn main() {
     unsafe{
         let mut host = Lv2Host::new();
-        // TODO
-        let mut string = String::from("http://calf.sourceforge.net/plugins/Compressor");
-        string.push('\0');
-        host.add_plugin(&string).expect("TermDaw: could not add plugin");
-        host.add_plugin("http://calf.sourceforge.net/plugins/Crusher\0").expect("TermDaw: could not add plugin");
+        host.add_plugin("http://calf.sourceforge.net/plugins/Compressor").expect("TermDaw: could not add plugin");
+        host.add_plugin("http://calf.sourceforge.net/plugins/Crusher").expect("TermDaw: could not add plugin");
 
         let args: Vec<String> = std::env::args().collect();
         let file = &args[1];

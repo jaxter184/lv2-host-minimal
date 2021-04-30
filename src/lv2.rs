@@ -15,6 +15,7 @@ pub struct Lv2Host{
     world: *mut LilvWorld,
     lilv_plugins: *const LilvPlugins,
     plugins: Vec<Plugin>,
+    uri_home: Vec<String>,
     in_buf: [f32; 2],
     out_buf: [f32; 2],
 }
@@ -28,13 +29,17 @@ impl Lv2Host{
             world,
             lilv_plugins,
             plugins: Vec::new(),
+            uri_home: Vec::new(), // need to keep strings alive otherwise lilv memory goes boom
             in_buf: [0.0; 2],
             out_buf: [0.0; 2],
         }
     }
 
     pub unsafe fn add_plugin(&mut self, uri: &str) -> Result<(), String>{
-        let uri = lilv_new_uri(self.world, uri.as_ptr() as *const i8);
+        let mut uri_src = uri.to_owned();
+        uri_src.push('\0'); // make sure it's null terminated
+        self.uri_home.push(uri_src);
+        let uri = lilv_new_uri(self.world, (&self.uri_home[self.uri_home.len() - 1]).as_ptr() as *const i8);
         let plugin = lilv_plugins_get_by_uri(self.lilv_plugins, uri);
         lilv_node_free(uri);
 
