@@ -3,6 +3,7 @@ use std::ffi::{ CStr };
 use std::ptr;
 use std::ffi;
 use std::collections::HashMap;
+use std::convert::TryInto;
 // find plugins in /usr/lib/lv2
 // URI list with lv2ls
 // https://docs.rs/lilv-sys/0.2.1/lilv_sys/index.html
@@ -15,65 +16,81 @@ pub const LILV_URI_CONNECTION_OPTIONAL: &[u8; 48usize] = b"http://lv2plug.in/ns/
 pub struct Lv2Host{
     world: *mut LilvWorld,
     lilv_plugins: *const LilvPlugins,
+    plugin_cap: usize,
     plugins: Vec<Plugin>,
     uri_home: Vec<String>,
     plugin_names: HashMap<String, usize>,
-    in_buf: [f32; 2],
-    out_buf: [f32; 2],
+    buffer_len: usize,
+    in_buf: Vec<f32>,
+    out_buf: Vec<f32>,
 }
 
 impl Lv2Host{
-    pub unsafe fn new() -> Self{
-        let world = lilv_world_new();
-        lilv_world_load_all(world);
-        let lilv_plugins = lilv_world_get_all_plugins(world);
+    pub fn new(plugin_cap: usize, buffer_len: usize) -> Self{
+        let (world, lilv_plugins) = unsafe{
+            let world = lilv_world_new();
+            lilv_world_load_all(world);
+            let lilv_plugins = lilv_world_get_all_plugins(world);
+            (world, lilv_plugins)
+        };
         Lv2Host{
             world,
             lilv_plugins,
-            plugins: Vec::new(),
+            plugin_cap,
+            plugins: Vec::with_capacity(plugin_cap), // don't let it resize: keep memory where it is
             uri_home: Vec::new(), // need to keep strings alive otherwise lilv memory goes boom
             plugin_names: HashMap::new(),
-            in_buf: [0.0; 2],
-            out_buf: [0.0; 2],
+            buffer_len,
+            in_buf: vec![0.0; buffer_len * 2], // also don't let it resize
+            out_buf: vec![0.0; buffer_len * 2], // also don't let it resize
         }
     }
 
-    pub unsafe fn add_plugin(&mut self, uri: &str, name: String) -> Result<(), String>{
+    pub fn add_plugin(&mut self, uri: &str, name: String) -> Result<(), String>{
+        if self.plugins.len() == self.plugin_cap{
+            return Err("TermDaw: can't add plugin: all plugin capacity used.".to_owned());
+        }
         let mut uri_src = uri.to_owned();
         uri_src.push('\0'); // make sure it's null terminated
         self.uri_home.push(uri_src);
-        let uri = lilv_new_uri(self.world, (&self.uri_home[self.uri_home.len() - 1]).as_ptr() as *const i8);
-        let plugin = lilv_plugins_get_by_uri(self.lilv_plugins, uri);
-        lilv_node_free(uri);
+        let plugin = unsafe{
+            let uri = lilv_new_uri(self.world, (&self.uri_home[self.uri_home.len() - 1]).as_ptr() as *const i8);
+            let plugin = lilv_plugins_get_by_uri(self.lilv_plugins, uri);
+            lilv_node_free(uri);
+            plugin
+        };
 
-        let (mut ports, port_names, n_audio_in, n_audio_out) = create_ports(self.world, plugin);
+        let (mut ports, port_names, n_audio_in, n_audio_out) = unsafe{ create_ports(self.world, plugin) };
         if n_audio_in != 2 || n_audio_out != 2 {
             return Err(format!("TermDaw: plugin audio input and output ports must be 2. \n\t Audio input ports: {}, Audio output ports: {}", n_audio_in, n_audio_out));
         }
 
-        let instance = lilv_plugin_instantiate(plugin, 44100.0, ptr::null_mut());
-        let (mut i, mut o) = (0, 0);
-        for p in &mut ports{
-            match p.ptype{
-                PortType::Control => {
-                    lilv_instance_connect_port(instance, p.index, &mut p.value as *mut f32 as *mut ffi::c_void);
-                },
-                PortType::Audio => {
-                    if p.is_input {
-                        lilv_instance_connect_port(instance, p.index, self.in_buf.as_ptr().offset(i) as *mut ffi::c_void);
-                        i += 1;
-                    } else {
-                        lilv_instance_connect_port(instance, p.index, self.out_buf.as_ptr().offset(o) as *mut ffi::c_void);
-                        o += 1;
+        let instance = unsafe{
+            let instance = lilv_plugin_instantiate(plugin, 44100.0, ptr::null_mut());
+            let (mut i, mut o) = (0, 0);
+            for p in &mut ports{
+                match p.ptype{
+                    PortType::Control => {
+                        lilv_instance_connect_port(instance, p.index, &mut p.value as *mut f32 as *mut ffi::c_void);
+                    },
+                    PortType::Audio => {
+                        if p.is_input {
+                            lilv_instance_connect_port(instance, p.index, self.in_buf.as_ptr().offset(i) as *mut ffi::c_void);
+                            i += 1;
+                        } else {
+                            lilv_instance_connect_port(instance, p.index, self.out_buf.as_ptr().offset(o) as *mut ffi::c_void);
+                            o += 1;
+                        }
+                    },
+                    PortType::Other => {
+                        lilv_instance_connect_port(instance, p.index, ptr::null_mut());
                     }
-                },
-                PortType::Other => {
-                    lilv_instance_connect_port(instance, p.index, ptr::null_mut());
                 }
             }
-        }
 
-        lilv_instance_activate(instance);
+            lilv_instance_activate(instance);
+            instance
+        };
 
         self.plugins.push(Plugin{
             lilv_plugin: plugin,
@@ -105,13 +122,53 @@ impl Lv2Host{
         }
     }
 
-    pub unsafe fn apply_plugin(&mut self, index: usize, input_frame: (f32, f32)) -> (f32, f32){
+    pub fn get_plugin_sheet(&self, index: usize) -> PluginSheet{
+        let plug = &self.plugins[index];
+        let mut ains = 0;
+        let mut aouts = 0;
+        let mut controls = Vec::new();
+        for port in &plug.ports{
+            if port.ptype == PortType::Audio{
+                if port.is_input{
+                    ains += 1;
+                } else {
+                    aouts += 1;
+                }
+            } else if port.ptype == PortType::Control && port.is_input{
+                controls.push((port.name.clone(), port.def, port.min, port.max));
+            }
+        }
+        PluginSheet{
+            audio_ins: ains,
+            audio_outs: aouts,
+            controls,
+        }
+    }
+
+    pub fn apply_plugin(&mut self, index: usize, input_frame: (f32, f32)) -> (f32, f32){
         if index >= self.plugins.len() { return (0.0, 0.0); }
         let plugin = &mut self.plugins[index];
         self.in_buf[0] = input_frame.0;
         self.in_buf[1] = input_frame.1;
-        lilv_instance_run(plugin.instance, 1);
+        unsafe {
+            lilv_instance_run(plugin.instance, 1);
+        }
         (self.out_buf[0], self.out_buf[1])
+    }
+
+    // not tested yet, need to get more of the daw up
+    pub fn apply_plugin_n_frames(&mut self, index: usize, input: &[f32]) -> Option<&[f32]>{
+        let frames = input.len() / 2;
+        if frames > self.buffer_len { return None; }
+        if index >= self.plugins.len() { return None; }
+        for (i, v) in input.iter().enumerate(){
+            self.in_buf[i] = *v;
+        }
+        let plugin = &mut self.plugins[index];
+        unsafe{
+            lilv_instance_run(plugin.instance, frames as u32);
+        }
+        Some(&self.out_buf)
     }
 }
 
@@ -127,6 +184,7 @@ impl Drop for Lv2Host{
     }
 }
 
+#[derive(PartialEq,Eq,Debug)]
 enum PortType{ Control, Audio, Other }
 
 struct Plugin{
@@ -136,6 +194,14 @@ struct Plugin{
     ports: Vec<Port>,
 }
 
+#[derive(Debug)]
+pub struct PluginSheet{
+    pub audio_ins: usize,
+    pub audio_outs: usize,
+    pub controls: Vec<(String, f32, f32, f32)>,
+}
+
+#[derive(Debug)]
 struct Port{
     lilv_port: *const LilvPort,
     index: u32,
