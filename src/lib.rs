@@ -1,13 +1,10 @@
 use lilv_sys::*;
-use urid::*;
-use lv2_urid::*;
 
 use std::ffi::{ CStr };
 use std::ptr;
 use std::ffi;
 use std::collections::HashMap;
-use std::convert::TryInto;
-use std::pin::Pin;
+
 // find plugins in /usr/lib/lv2
 // URI list with lv2ls
 // https://docs.rs/lilv-sys/0.2.1/lilv_sys/index.html
@@ -16,7 +13,7 @@ use std::pin::Pin;
 // https://discord.com/channels/273534239310479360/592856094527848449/837709621111947285
 
 pub const LILV_URI_CONNECTION_OPTIONAL: &[u8; 48usize] = b"http://lv2plug.in/ns/lv2core#connectionOptional\0";
-pub const LV2_URID__map: &'static [u8; 34usize] = b"http://lv2plug.in/ns/ext/urid#map\0";
+pub const LV2_URID__map: &[u8; 34usize] = b"http://lv2plug.in/ns/ext/urid#map\0";
 
 pub struct Lv2Host{
     world: *mut LilvWorld,
@@ -54,43 +51,41 @@ impl Lv2Host{
     }
 
     pub fn test_midi_atom(&mut self, typebytes: [u8; 4], seqbytes: [u8; 4]){
-        unsafe{
-            // header seq urid
-            self.atom_buf[0] = seqbytes[0];
-            self.atom_buf[1] = seqbytes[1];
-            self.atom_buf[2] = seqbytes[2];
-            self.atom_buf[3] = seqbytes[3];
-            // size
-            self.atom_buf[4] = 0;
-            self.atom_buf[5] = 0;
-            self.atom_buf[6] = 0;
-            self.atom_buf[7] = 24;
-            // timestamp
-            self.atom_buf[8] = 0;
-            self.atom_buf[9] = 0;
-            self.atom_buf[10] = 0;
-            self.atom_buf[11] = 0;
-            self.atom_buf[12] = 0;
-            self.atom_buf[13] = 0;
-            self.atom_buf[14] = 0;
-            self.atom_buf[15] = 0;
-            // type
-            self.atom_buf[16] = typebytes[0];
-            self.atom_buf[17] = typebytes[1];
-            self.atom_buf[18] = typebytes[2];
-            self.atom_buf[19] = typebytes[3];
-            // size
-            self.atom_buf[20] = 3;
-            self.atom_buf[21] = 0;
-            self.atom_buf[22] = 0;
-            self.atom_buf[23] = 0;
-            // midi on
-            self.atom_buf[24] = 0x90;
-            self.atom_buf[25] = 50;
-            self.atom_buf[26] = 100;
-        }
+        // header seq urid
+        self.atom_buf[0] = seqbytes[0];
+        self.atom_buf[1] = seqbytes[1];
+        self.atom_buf[2] = seqbytes[2];
+        self.atom_buf[3] = seqbytes[3];
+        // size
+        self.atom_buf[4] = 0;
+        self.atom_buf[5] = 0;
+        self.atom_buf[6] = 0;
+        self.atom_buf[7] = 24;
+        // timestamp
+        self.atom_buf[8] = 0;
+        self.atom_buf[9] = 0;
+        self.atom_buf[10] = 0;
+        self.atom_buf[11] = 0;
+        self.atom_buf[12] = 0;
+        self.atom_buf[13] = 0;
+        self.atom_buf[14] = 0;
+        self.atom_buf[15] = 0;
+        // type
+        self.atom_buf[16] = typebytes[0];
+        self.atom_buf[17] = typebytes[1];
+        self.atom_buf[18] = typebytes[2];
+        self.atom_buf[19] = typebytes[3];
+        // size
+        self.atom_buf[20] = 3;
+        self.atom_buf[21] = 0;
+        self.atom_buf[22] = 0;
+        self.atom_buf[23] = 0;
+        // midi on
+        self.atom_buf[24] = 0x90;
+        self.atom_buf[25] = 50;
+        self.atom_buf[26] = 100;
     }
-
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn add_plugin(&mut self, uri: &str, name: String, features_ptr: *const *const lv2_raw::core::LV2Feature) -> Result<(), String>{
         if self.plugins.len() == self.plugin_cap{
             return Err("TermDaw: can't add plugin: all plugin capacity used.".to_owned());
@@ -105,7 +100,7 @@ impl Lv2Host{
             plugin
         };
 
-        let (mut ports, port_names, n_audio_in, n_audio_out, n_atom_in) = unsafe{ create_ports(self.world, plugin) };
+        let (mut ports, port_names, _n_audio_in, _n_audio_out, n_atom_in) = unsafe{ create_ports(self.world, plugin) };
         // if n_audio_in != 2 || n_audio_out != 2 {
         //     return Err(format!("TermDaw: plugin audio input and output ports must be 2. \n\t Audio input ports: {}, Audio output ports: {}", n_audio_in, n_audio_out));
         // }
