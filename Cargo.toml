@@ -8,4 +8,8 @@ edition = "2018"
 
 [dependencies]
 lilv-sys = "0.2.1"
+lv2_raw = "0.2.0"
+lv2-urid = "2.1.0"
+lv2-sys = "2.0.0"
+urid = "0.1.0"
 hound = "3.4.0"
