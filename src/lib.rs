@@ -12,7 +12,7 @@ use std::collections::HashMap;
 // UB fixed thanks to rust lang discord:
 // https://discord.com/channels/273534239310479360/592856094527848449/837709621111947285
 
-pub const LILV_URI_CONNECTION_OPTIONAL: &[u8; 48usize] = b"http://lv2plug.in/ns/lv2core#connectionOptional\0";
+const LILV_URI_CONNECTION_OPTIONAL: &[u8; 48usize] = b"http://lv2plug.in/ns/lv2core#connectionOptional\0";
 pub const LV2_URID__map: &[u8; 34usize] = b"http://lv2plug.in/ns/ext/urid#map\0";
 
 pub struct Lv2Host{
@@ -85,10 +85,11 @@ impl Lv2Host{
         self.atom_buf[25] = 50;
         self.atom_buf[26] = 100;
     }
+
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn add_plugin(&mut self, uri: &str, name: String, features_ptr: *const *const lv2_raw::core::LV2Feature) -> Result<(), String>{
         if self.plugins.len() == self.plugin_cap{
-            return Err("TermDaw: can't add plugin: all plugin capacity used.".to_owned());
+            return Err("Lv2mh: can't add plugin: all plugin capacity used.".to_owned());
         }
         let mut uri_src = uri.to_owned();
         uri_src.push('\0'); // make sure it's null terminated
@@ -102,11 +103,11 @@ impl Lv2Host{
 
         let (mut ports, port_names, _n_audio_in, _n_audio_out, n_atom_in) = unsafe{ create_ports(self.world, plugin) };
         // if n_audio_in != 2 || n_audio_out != 2 {
-        //     return Err(format!("TermDaw: plugin audio input and output ports must be 2. \n\t Audio input ports: {}, Audio output ports: {}", n_audio_in, n_audio_out));
+        //     return Err(format!("Lv2hm: plugin audio input and output ports must be 2. \n\t Audio input ports: {}, Audio output ports: {}", n_audio_in, n_audio_out));
         // }
 
         if n_atom_in > 1 {
-            return Err(format!("TermDaw: plugin has more than one atom input port: {} atom input ports found", n_atom_in));
+            return Err(format!("Lv2hm: plugin has more than one atom input port: {} atom input ports found", n_atom_in));
         }
 
         let instance = unsafe{
@@ -276,8 +277,8 @@ struct Port{
 
 // ([ports], [(port_name, index)], n_audio_in, n_audio_out, n_atom_in)
 unsafe fn create_ports(world: *mut LilvWorld, plugin: *const LilvPluginImpl) -> (Vec<Port>, HashMap<String, usize>, usize, usize, usize){
-    if world.is_null() { panic!("TermDaw: create_ports: world is null."); }
-    if plugin.is_null() { panic!("TermDaw: create_ports: plugin is null."); }
+    if world.is_null() { panic!("Lv2hm: create_ports: world is null."); }
+    if plugin.is_null() { panic!("Lv2hm: create_ports: plugin is null."); }
 
     let mut ports = Vec::new();
     let mut names = HashMap::new();
@@ -309,14 +310,14 @@ unsafe fn create_ports(world: *mut LilvWorld, plugin: *const LilvPluginImpl) -> 
         let lilv_name = lilv_port_get_name(plugin, lport);
         let lilv_str = lilv_node_as_string(lilv_name);
         let c_str = CStr::from_ptr(lilv_str as *const i8);
-        let name = c_str.to_str().expect("TermDaw: could not build port name string.").to_owned();
+        let name = c_str.to_str().expect("Lv2hm: could not build port name string.").to_owned();
 
         names.insert(name.clone(), i as usize);
 
         let optional = lilv_port_has_property(plugin, lport, lv2_connection_optional);
 
         let is_input = if lilv_port_is_a(plugin, lport, lv2_input_port) { true }
-        else if !lilv_port_is_a(plugin, lport, lv2_output_port) && !optional { panic!("TermDaw: Port is neither input nor output."); }
+        else if !lilv_port_is_a(plugin, lport, lv2_output_port) && !optional { panic!("Lv2hm: Port is neither input nor output."); }
         else { false };
 
         let ptype = if lilv_port_is_a(plugin, lport, lv2_control_port) { PortType::Control }
@@ -332,7 +333,7 @@ unsafe fn create_ports(world: *mut LilvWorld, plugin: *const LilvPluginImpl) -> 
             n_atom_in += 1;
             PortType::Atom
         }
-        else if !optional { panic!("TermDaw: port is neither a control, audio or optional port."); }
+        else if !optional { panic!("Lv2hm: port is neither a control, audio or optional port."); }
         else { PortType::Other };
 
         ports.push(Port{

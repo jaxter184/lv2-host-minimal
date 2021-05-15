@@ -5,8 +5,8 @@ use lv2_urid::*;
 use std::pin::Pin;
 
 fn main() {
-    audio_midi_instrument_test();
-    // audio_process_test();
+    //audio_midi_instrument_test();
+    audio_process_test();
     println!("I didn't crash!");
 }
 
@@ -28,7 +28,7 @@ fn audio_midi_instrument_test(){
     let mapfp = &mapf as *const lv2_raw::core::LV2Feature;
     let features = vec![mapfp, 0 as *const lv2_raw::core::LV2Feature];
     let features_ptr = features.as_ptr() as *const *const lv2_raw::core::LV2Feature;
-    host.add_plugin("http://calf.sourceforge.net/plugins/Monosynth", "Organ".to_owned(), features_ptr).expect("TermDaw: could not add plugin");
+    host.add_plugin("http://calf.sourceforge.net/plugins/Monosynth", "Organ".to_owned(), features_ptr).expect("Lv2hm: could not add plugin");
     host.set_value("Organ", "MIDI Channel", 0.0);
     host.test_midi_atom(bytes, atom_seq_urid.get().to_le_bytes());
 
@@ -39,7 +39,7 @@ fn audio_midi_instrument_test(){
         sample_format: hound::SampleFormat::Int,
     };
     let mut writer = hound::WavWriter::create("outp.wav", spec).unwrap();
-    for _ in 0 .. 44100 {
+    for _ in 0..44100 {
         let (l, r) = host.apply_instrument(0);
         let amplitude = i16::MAX as f32;
         writer.write_sample((l * amplitude) as i16).unwrap();
@@ -49,15 +49,15 @@ fn audio_midi_instrument_test(){
 
 fn audio_process_test(){
     let mut host = Lv2Host::new(1000, 1);
-    host.add_plugin("http://calf.sourceforge.net/plugins/Compressor", "compressor".to_owned(), std::ptr::null_mut()).expect("TermDaw: could not add plugin");
-    host.add_plugin("http://calf.sourceforge.net/plugins/Crusher", "crusher".to_owned(), std::ptr::null_mut()).expect("TermDaw: could not add plugin");
-    host.add_plugin("http://calf.sourceforge.net/plugins/Reverb", "reverb".to_owned(), std::ptr::null_mut()).expect("TermDaw: could not add plugin");
-    host.add_plugin("http://calf.sourceforge.net/plugins/VintageDelay", "delay".to_owned(), std::ptr::null_mut()).expect("TermDaw: could not add plugin");
+    host.add_plugin("http://calf.sourceforge.net/plugins/Compressor", "compressor".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
+    host.add_plugin("http://calf.sourceforge.net/plugins/Crusher", "crusher".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
+    host.add_plugin("http://calf.sourceforge.net/plugins/Reverb", "reverb".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
+    host.add_plugin("http://calf.sourceforge.net/plugins/VintageDelay", "delay".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
     println!("{:?}", host.get_plugin_sheet(0));
 
     let args: Vec<String> = std::env::args().collect();
     let file = &args[1];
-    let mut reader = hound::WavReader::open(file).expect("TermDaw: could not open audio file.");
+    let mut reader = hound::WavReader::open(file).expect("Lv2hm: could not open audio file.");
     let specs = reader.spec();
     let mut writer = hound::WavWriter::create("outp.wav", specs).unwrap();
 
