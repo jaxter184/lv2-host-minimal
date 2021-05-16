@@ -22,6 +22,7 @@ pub struct Lv2Host{
     plugins: Vec<Plugin>,
     uri_home: Vec<String>,
     plugin_names: HashMap<String, usize>,
+    dead_list: Vec<usize>,
     buffer_len: usize,
     in_buf: Vec<f32>,
     out_buf: Vec<f32>,
@@ -43,10 +44,19 @@ impl Lv2Host{
             plugins: Vec::with_capacity(plugin_cap), // don't let it resize: keep memory where it is
             uri_home: Vec::new(), // need to keep strings alive otherwise lilv memory goes boom
             plugin_names: HashMap::new(),
+            dead_list: Vec::new(),
             buffer_len,
             in_buf: vec![0.0; buffer_len * 2], // also don't let it resize
             out_buf: vec![0.0; buffer_len * 2], // also don't let it resize
             atom_buf: [0; 1024],
+        }
+    }
+
+    pub fn get_index(&self, name: &str) -> Option<usize>{
+        if let Some(index) = self.plugin_names.get(name){
+            Some(*index)
+        } else {
+            None
         }
     }
 
@@ -88,7 +98,8 @@ impl Lv2Host{
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn add_plugin(&mut self, uri: &str, name: String, features_ptr: *const *const lv2_raw::core::LV2Feature) -> Result<(), String>{
-        if self.plugins.len() == self.plugin_cap{
+        let replace_index = self.dead_list.pop();
+        if self.plugins.len() == self.plugin_cap && replace_index == None{
             return Err("Lv2mh: can't add plugin: all plugin capacity used.".to_owned());
         }
         let mut uri_src = uri.to_owned();
@@ -101,10 +112,10 @@ impl Lv2Host{
             plugin
         };
 
-        let (mut ports, port_names, _n_audio_in, _n_audio_out, n_atom_in) = unsafe{ create_ports(self.world, plugin) };
-        // if n_audio_in != 2 || n_audio_out != 2 {
-        //     return Err(format!("Lv2hm: plugin audio input and output ports must be 2. \n\t Audio input ports: {}, Audio output ports: {}", n_audio_in, n_audio_out));
-        // }
+        let (mut ports, port_names, n_audio_in, n_audio_out, n_atom_in) = unsafe{ create_ports(self.world, plugin) };
+        if n_audio_in > 2 || n_audio_out > 2 {
+            return Err(format!("Lv2hm: can only have at max 2 audio input ports and 2 audio output ports. \n\t Audio input ports: {}, Audio output ports: {}", n_audio_in, n_audio_out));
+        }
 
         if n_atom_in > 1 {
             return Err(format!("Lv2hm: plugin has more than one atom input port: {} atom input ports found", n_atom_in));
@@ -143,23 +154,48 @@ impl Lv2Host{
             instance
         };
 
-        self.plugins.push(Plugin{
+        let p = Plugin{
             lilv_plugin: plugin,
             instance,
             port_names,
             ports,
-        });
-        self.plugin_names.insert(name, self.plugins.len() - 1);
+        };
+
+        if let Some(i) = replace_index{
+            self.plugins[i] = p;
+            self.plugin_names.insert(name, i);
+            println!("dstn: {}", i);
+        } else {
+            self.plugins.push(p);
+            self.plugin_names.insert(name, self.plugins.len() - 1);
+        }
 
         Ok(())
     }
 
-    fn set_port_value(plug: &mut Plugin, port: &str, value: f32) -> bool{
+    pub fn remove_plugin(&mut self, name: &str) -> bool{
+        if let Some(index) = self.plugin_names.get(name){
+            unsafe{
+                lilv_instance_deactivate(self.plugins[*index].instance);
+                // can't do this?
+                // lilv_instance_free(self.plugins[*index].instance);
+            }
+            self.dead_list.push(*index);
+            self.plugin_names.remove(name);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn set_port_value(plug: &mut Plugin, port: &str, value: Option<f32>) -> bool{
             let port_index = plug.port_names.get(port);
             if port_index.is_none() { return false; }
             let port_index = port_index.unwrap();
             let min = plug.ports[*port_index].min;
             let max = plug.ports[*port_index].max;
+            let value = if let Some(v) = value { v }
+            else { plug.ports[*port_index].def };
             plug.ports[*port_index].value = value.max(min).min(max);
             true
     }
@@ -167,7 +203,16 @@ impl Lv2Host{
     pub fn set_value(&mut self, plugin: &str, port: &str, value: f32) -> bool{
         if let Some(index) = self.plugin_names.get(plugin){
             let plug = &mut self.plugins[*index];
-            Self::set_port_value(plug, port, value)
+            Self::set_port_value(plug, port, Some(value))
+        } else {
+            false
+        }
+    }
+
+    pub fn reset_value(&mut self, plugin: &str, port: &str) -> bool{
+        if let Some(index) = self.plugin_names.get(plugin){
+            let plug = &mut self.plugins[*index];
+            Self::set_port_value(plug, port, None)
         } else {
             false
         }
@@ -235,7 +280,10 @@ impl Lv2Host{
 impl Drop for Lv2Host{
     fn drop(&mut self){
         unsafe{
-            for plugin in &self.plugins{
+            for (i, plugin) in self.plugins.iter().enumerate(){
+                if self.dead_list.contains(&i){
+                    continue;
+                }
                 lilv_instance_deactivate(plugin.instance);
                 lilv_instance_free(plugin.instance);
             }

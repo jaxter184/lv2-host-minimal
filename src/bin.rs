@@ -49,10 +49,12 @@ fn audio_midi_instrument_test(){
 
 fn audio_process_test(){
     let mut host = Lv2Host::new(1000, 1);
-    host.add_plugin("http://calf.sourceforge.net/plugins/Compressor", "compressor".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
-    host.add_plugin("http://calf.sourceforge.net/plugins/Crusher", "crusher".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
     host.add_plugin("http://calf.sourceforge.net/plugins/Reverb", "reverb".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
     host.add_plugin("http://calf.sourceforge.net/plugins/VintageDelay", "delay".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
+    host.add_plugin("http://calf.sourceforge.net/plugins/Compressor", "compressor".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
+    host.add_plugin("http://calf.sourceforge.net/plugins/Crusher", "crusher".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
+    host.remove_plugin("reverb");
+    host.remove_plugin("delay");
     println!("{:?}", host.get_plugin_sheet(0));
 
     let args: Vec<String> = std::env::args().collect();
