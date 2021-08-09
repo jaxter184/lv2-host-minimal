@@ -13,7 +13,7 @@ use std::collections::HashMap;
 // https://discord.com/channels/273534239310479360/592856094527848449/837709621111947285
 
 const LILV_URI_CONNECTION_OPTIONAL: &[u8; 48usize] = b"http://lv2plug.in/ns/lv2core#connectionOptional\0";
-pub const LV2_URID__map: &[u8; 34usize] = b"http://lv2plug.in/ns/ext/urid#map\0";
+pub const LV2_URID_MAP: &[u8; 34usize] = b"http://lv2plug.in/ns/ext/urid#map\0";
 
 pub struct Lv2Host{
     world: *mut LilvWorld,
@@ -53,11 +53,7 @@ impl Lv2Host{
     }
 
     pub fn get_index(&self, name: &str) -> Option<usize>{
-        if let Some(index) = self.plugin_names.get(name){
-            Some(*index)
-        } else {
-            None
-        }
+        self.plugin_names.get(name).copied()
     }
 
     pub fn test_midi_atom(&mut self, typebytes: [u8; 4], seqbytes: [u8; 4]){
@@ -122,7 +118,7 @@ impl Lv2Host{
         }
 
         let instance = unsafe{
-            let map_feature_uri = lilv_new_uri(self.world, LV2_URID__map.as_ptr() as *const i8);
+            let map_feature_uri = lilv_new_uri(self.world, LV2_URID_MAP.as_ptr() as *const i8);
             let map_feature_bool = lilv_plugin_has_feature(plugin, map_feature_uri);
             println!("supports map: {}", map_feature_bool); // prints true, supports map
             let instance = lilv_plugin_instantiate(plugin, 44100.0, features_ptr);
@@ -155,7 +151,6 @@ impl Lv2Host{
         };
 
         let p = Plugin{
-            lilv_plugin: plugin,
             instance,
             port_names,
             ports,
@@ -252,8 +247,8 @@ impl Lv2Host{
         (self.out_buf[0], self.out_buf[1])
     }
 
-    // not tested yet, need to get more of the daw up
-    pub fn apply_plugin_n_frames(&mut self, index: usize, input: &[f32]) -> Option<&[f32]>{
+    // TODO: fix
+    pub fn _apply_plugin_n_frames(&mut self, index: usize, input: &[f32]) -> Option<&[f32]>{
         let frames = input.len() / 2;
         if frames > self.buffer_len { return None; }
         if index >= self.plugins.len() { return None; }
@@ -293,7 +288,6 @@ impl Drop for Lv2Host{
 }
 
 struct Plugin{
-    lilv_plugin: *const LilvPlugin,
     instance: *mut LilvInstance,
     port_names: HashMap<String, usize>,
     ports: Vec<Port>,

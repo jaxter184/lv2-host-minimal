@@ -22,11 +22,11 @@ fn audio_midi_instrument_test(){
     println!("{}, {:?}", midi_type_urid.get(), bytes);
     // let map_ptr = map_interface.handle;
     let mapf = lv2_raw::core::LV2Feature {
-        uri: LV2_URID__map.as_ptr() as *const i8,
+        uri: LV2_URID_MAP.as_ptr() as *const i8,
         data: &mut map_interface as *mut lv2_sys::LV2_URID_Map as *mut std::ffi::c_void,
     };
     let mapfp = &mapf as *const lv2_raw::core::LV2Feature;
-    let features = vec![mapfp, 0 as *const lv2_raw::core::LV2Feature];
+    let features = vec![mapfp, std::ptr::null::<lv2_raw::core::LV2Feature>()];
     let features_ptr = features.as_ptr() as *const *const lv2_raw::core::LV2Feature;
     host.add_plugin("http://calf.sourceforge.net/plugins/Monosynth", "Organ".to_owned(), features_ptr).expect("Lv2hm: could not add plugin");
     host.set_value("Organ", "MIDI Channel", 0.0);
@@ -53,8 +53,8 @@ fn audio_process_test(){
     host.add_plugin("http://calf.sourceforge.net/plugins/VintageDelay", "delay".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
     host.add_plugin("http://calf.sourceforge.net/plugins/Compressor", "compressor".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
     host.add_plugin("http://calf.sourceforge.net/plugins/Crusher", "crusher".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
-    host.remove_plugin("reverb");
-    host.remove_plugin("delay");
+    // host.remove_plugin("reverb");
+    // host.remove_plugin("delay");
     println!("{:?}", host.get_plugin_sheet(0));
 
     let args: Vec<String> = std::env::args().collect();
