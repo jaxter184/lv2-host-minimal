@@ -12,7 +12,7 @@ fn main() {
 
 // doesn't work yet
 fn audio_midi_instrument_test(){
-    let mut host = Lv2Host::new(1000, 1);
+    let mut host = Lv2Host::new(1000, 1, 44100);
     let mut host_map: Pin<Box<HostMap<HashURIDMapper>>> = Box::pin(HashURIDMapper::new().into());
     let mut map_interface = host_map.as_mut().make_map_interface();
     let map = LV2Map::new(&map_interface);
@@ -48,7 +48,7 @@ fn audio_midi_instrument_test(){
 }
 
 fn audio_process_test(){
-    let mut host = Lv2Host::new(1000, 1);
+    let mut host = Lv2Host::new(1000, 1, 44100);
     host.add_plugin("http://calf.sourceforge.net/plugins/Reverb", "reverb".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
     host.add_plugin("http://calf.sourceforge.net/plugins/VintageDelay", "delay".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");
     host.add_plugin("http://calf.sourceforge.net/plugins/Compressor", "compressor".to_owned(), std::ptr::null_mut()).expect("Lv2hm: could not add plugin");

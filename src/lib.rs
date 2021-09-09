@@ -24,13 +24,25 @@ pub struct Lv2Host{
     plugin_names: HashMap<String, usize>,
     dead_list: Vec<usize>,
     buffer_len: usize,
+    sr: f64,
     in_buf: Vec<f32>,
     out_buf: Vec<f32>,
     atom_buf: [u8; 1024],
 }
 
+#[derive(Debug)]
+pub enum AddPluginError{
+    CapacityReached,
+    MoreThanTwoInOrOutAudioPorts(usize, usize),
+    MoreThanOneAtomPort(usize),
+    WorldIsNull,
+    PluginIsNull,
+    PortNeitherInputOrOutput,
+    PortNeitherControlOrAudioOrOptional,
+}
+
 impl Lv2Host{
-    pub fn new(plugin_cap: usize, buffer_len: usize) -> Self{
+    pub fn new(plugin_cap: usize, buffer_len: usize, sample_rate: usize) -> Self{
         let (world, lilv_plugins) = unsafe{
             let world = lilv_world_new();
             lilv_world_load_all(world);
@@ -46,6 +58,7 @@ impl Lv2Host{
             plugin_names: HashMap::new(),
             dead_list: Vec::new(),
             buffer_len,
+            sr: sample_rate as f64,
             in_buf: vec![0.0; buffer_len * 2], // also don't let it resize
             out_buf: vec![0.0; buffer_len * 2], // also don't let it resize
             atom_buf: [0; 1024],
@@ -93,10 +106,10 @@ impl Lv2Host{
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn add_plugin(&mut self, uri: &str, name: String, features_ptr: *const *const lv2_raw::core::LV2Feature) -> Result<(), String>{
+    pub fn add_plugin(&mut self, uri: &str, name: String, features_ptr: *const *const lv2_raw::core::LV2Feature) -> Result<(), AddPluginError>{
         let replace_index = self.dead_list.pop();
         if self.plugins.len() == self.plugin_cap && replace_index == None{
-            return Err("Lv2mh: can't add plugin: all plugin capacity used.".to_owned());
+            return Err(AddPluginError::CapacityReached);
         }
         let mut uri_src = uri.to_owned();
         uri_src.push('\0'); // make sure it's null terminated
@@ -108,20 +121,26 @@ impl Lv2Host{
             plugin
         };
 
-        let (mut ports, port_names, n_audio_in, n_audio_out, n_atom_in) = unsafe{ create_ports(self.world, plugin) };
+        let (mut ports, port_names, n_audio_in, n_audio_out, n_atom_in) = unsafe {
+            match create_ports(self.world, plugin) {
+                Ok(x) => x,
+                Err(e) => { return Err(e); },
+            }
+        };
+
         if n_audio_in > 2 || n_audio_out > 2 {
-            return Err(format!("Lv2hm: can only have at max 2 audio input ports and 2 audio output ports. \n\t Audio input ports: {}, Audio output ports: {}", n_audio_in, n_audio_out));
+            return Err(AddPluginError::MoreThanTwoInOrOutAudioPorts(n_audio_in, n_audio_out));
         }
 
         if n_atom_in > 1 {
-            return Err(format!("Lv2hm: plugin has more than one atom input port: {} atom input ports found", n_atom_in));
+            return Err(AddPluginError::MoreThanOneAtomPort(n_atom_in));
         }
 
         let instance = unsafe{
-            let map_feature_uri = lilv_new_uri(self.world, LV2_URID_MAP.as_ptr() as *const i8);
-            let map_feature_bool = lilv_plugin_has_feature(plugin, map_feature_uri);
-            println!("supports map: {}", map_feature_bool); // prints true, supports map
-            let instance = lilv_plugin_instantiate(plugin, 44100.0, features_ptr);
+            //let map_feature_uri = lilv_new_uri(self.world, LV2_URID_MAP.as_ptr() as *const i8);
+            //let map_feature_bool = lilv_plugin_has_feature(plugin, map_feature_uri);
+            //println!("supports map: {}", map_feature_bool); // prints true, supports map
+            let instance = lilv_plugin_instantiate(plugin, self.sr, features_ptr);
             let (mut i, mut o) = (0, 0);
             for p in &mut ports{
                 match p.ptype{
@@ -159,7 +178,6 @@ impl Lv2Host{
         if let Some(i) = replace_index{
             self.plugins[i] = p;
             self.plugin_names.insert(name, i);
-            println!("dstn: {}", i);
         } else {
             self.plugins.push(p);
             self.plugin_names.insert(name, self.plugins.len() - 1);
@@ -317,10 +335,12 @@ struct Port{
     name: String,
 }
 
+type CreatePortsRes = (Vec<Port>, HashMap<String, usize>, usize, usize, usize);
+
 // ([ports], [(port_name, index)], n_audio_in, n_audio_out, n_atom_in)
-unsafe fn create_ports(world: *mut LilvWorld, plugin: *const LilvPluginImpl) -> (Vec<Port>, HashMap<String, usize>, usize, usize, usize){
-    if world.is_null() { panic!("Lv2hm: create_ports: world is null."); }
-    if plugin.is_null() { panic!("Lv2hm: create_ports: plugin is null."); }
+unsafe fn create_ports(world: *mut LilvWorld, plugin: *const LilvPluginImpl) -> Result<CreatePortsRes, AddPluginError>{
+    if world.is_null() { return Err(AddPluginError::WorldIsNull); }
+    if plugin.is_null() { return Err(AddPluginError::PluginIsNull); }
 
     let mut ports = Vec::new();
     let mut names = HashMap::new();
@@ -359,7 +379,7 @@ unsafe fn create_ports(world: *mut LilvWorld, plugin: *const LilvPluginImpl) -> 
         let optional = lilv_port_has_property(plugin, lport, lv2_connection_optional);
 
         let is_input = if lilv_port_is_a(plugin, lport, lv2_input_port) { true }
-        else if !lilv_port_is_a(plugin, lport, lv2_output_port) && !optional { panic!("Lv2hm: Port is neither input nor output."); }
+        else if !lilv_port_is_a(plugin, lport, lv2_output_port) && !optional { return Err(AddPluginError::PortNeitherInputOrOutput); }
         else { false };
 
         let ptype = if lilv_port_is_a(plugin, lport, lv2_control_port) { PortType::Control }
@@ -375,7 +395,7 @@ unsafe fn create_ports(world: *mut LilvWorld, plugin: *const LilvPluginImpl) -> 
             n_atom_in += 1;
             PortType::Atom
         }
-        else if !optional { panic!("Lv2hm: port is neither a control, audio or optional port."); }
+        else if !optional { return Err(AddPluginError::PortNeitherControlOrAudioOrOptional); }
         else { PortType::Other };
 
         ports.push(Port{
@@ -392,5 +412,5 @@ unsafe fn create_ports(world: *mut LilvWorld, plugin: *const LilvPluginImpl) -> 
     lilv_node_free(lv2_output_port);
     lilv_node_free(lv2_input_port);
 
-    (ports, names, n_audio_in, n_audio_out, n_atom_in)
+    Ok((ports, names, n_audio_in, n_audio_out, n_atom_in))
 }
