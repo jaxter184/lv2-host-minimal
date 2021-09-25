@@ -69,42 +69,6 @@ impl Lv2Host{
         self.plugin_names.get(name).copied()
     }
 
-    pub fn test_midi_atom(&mut self, typebytes: [u8; 4], seqbytes: [u8; 4]){
-        // header seq urid
-        self.atom_buf[0] = seqbytes[0];
-        self.atom_buf[1] = seqbytes[1];
-        self.atom_buf[2] = seqbytes[2];
-        self.atom_buf[3] = seqbytes[3];
-        // size
-        self.atom_buf[4] = 0;
-        self.atom_buf[5] = 0;
-        self.atom_buf[6] = 0;
-        self.atom_buf[7] = 24;
-        // timestamp
-        self.atom_buf[8] = 0;
-        self.atom_buf[9] = 0;
-        self.atom_buf[10] = 0;
-        self.atom_buf[11] = 0;
-        self.atom_buf[12] = 0;
-        self.atom_buf[13] = 0;
-        self.atom_buf[14] = 0;
-        self.atom_buf[15] = 0;
-        // type
-        self.atom_buf[16] = typebytes[0];
-        self.atom_buf[17] = typebytes[1];
-        self.atom_buf[18] = typebytes[2];
-        self.atom_buf[19] = typebytes[3];
-        // size
-        self.atom_buf[20] = 3;
-        self.atom_buf[21] = 0;
-        self.atom_buf[22] = 0;
-        self.atom_buf[23] = 0;
-        // midi on
-        self.atom_buf[24] = 0x90;
-        self.atom_buf[25] = 50;
-        self.atom_buf[26] = 100;
-    }
-
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn add_plugin(&mut self, uri: &str, name: String, features_ptr: *const *const lv2_raw::core::LV2Feature) -> Result<(), AddPluginError>{
         let replace_index = self.dead_list.pop();
@@ -280,8 +244,11 @@ impl Lv2Host{
         Some(&self.out_buf)
     }
 
-    pub fn apply_instrument(&mut self, index: usize) -> (f32, f32){
+    pub fn apply_instrument(&mut self, index: usize, input: &[u8]) -> (f32, f32){
         if index >= self.plugins.len() { return (0.0, 0.0); }
+        for (i, v) in input.iter().enumerate() {
+            self.atom_buf[i] = *v;
+        }
         let plugin = &mut self.plugins[index];
         unsafe {
             lilv_instance_run(plugin.instance, 1);

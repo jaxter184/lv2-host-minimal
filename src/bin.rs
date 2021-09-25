@@ -5,8 +5,8 @@ use lv2_urid::*;
 use std::pin::Pin;
 
 fn main() {
-    //audio_midi_instrument_test();
-    audio_process_test();
+    audio_midi_instrument_test();
+    //audio_process_test();
     println!("I didn't crash!");
 }
 
@@ -30,17 +30,32 @@ fn audio_midi_instrument_test(){
     let features_ptr = features.as_ptr() as *const *const lv2_raw::core::LV2Feature;
     host.add_plugin("http://calf.sourceforge.net/plugins/Monosynth", "Organ".to_owned(), features_ptr).expect("Lv2hm: could not add plugin");
     host.set_value("Organ", "MIDI Channel", 0.0);
-    host.test_midi_atom(bytes, atom_seq_urid.get().to_le_bytes());
+
+    // set up atom bytestreams
+    let asbytes = atom_seq_urid.get().to_le_bytes();
+    let midi_on = test_midi_atom(bytes, asbytes, [0x90, 50, 100]);
+    let midi_off = test_midi_atom(bytes, asbytes, [0x80, 50, 100]);
+    let reset = [8,0,0,0, asbytes[0], asbytes[1], asbytes[2], asbytes[3], 0,0,0,0,0,0,0,0,];
 
     let spec = hound::WavSpec {
-        channels: 1,
+        channels: 2,
         sample_rate: 44100,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
     let mut writer = hound::WavWriter::create("outp.wav", spec).unwrap();
-    for _ in 0..44100 {
-        let (l, r) = host.apply_instrument(0);
+    for i in 0..44100 {
+	    // alternate midi on and off messages, 5000 samples apart
+        let bytes = if (i % 10000) == 0 {
+            &midi_on[..]
+        }
+        else if (i % 5000) == 0 {
+            &midi_off[..]
+        }
+        else {
+            &reset
+        };
+        let (l, r) = host.apply_instrument(0, bytes);
         let amplitude = i16::MAX as f32;
         writer.write_sample((l * amplitude) as i16).unwrap();
         writer.write_sample((r * amplitude) as i16).unwrap();
@@ -85,3 +100,24 @@ fn audio_process_test(){
     }
 }
 
+fn test_midi_atom(typebytes: [u8; 4], seqbytes: [u8; 4], midibytes: [u8; 3]) -> [u8;38]{
+    [
+        // size
+        32, 0, 0, 0,
+        // type
+        seqbytes[0], seqbytes[1], seqbytes[2], seqbytes[3],
+        // timestamp
+        0,0,0,0,0,0,0,0, // frame
+        0,0,0,0,0,0,0,0, // subframe
+        // size
+        3, 0, 0, 0,
+        // type
+        typebytes[0], typebytes[1], typebytes[2], typebytes[3],
+        // midi
+        midibytes[0],
+        midibytes[1],
+        midibytes[2],
+        // 32 bit pad (not sure if this is necessary)
+        0,0,0,
+    ]
+}
