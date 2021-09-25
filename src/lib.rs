@@ -266,19 +266,19 @@ impl Lv2Host{
     }
 
     // TODO: fix
-    pub fn _apply_plugin_n_frames(&mut self, index: usize, input: &[f32]) -> Option<&[f32]>{
-        let frames = input.len() / 2;
-        if frames > self.buffer_len { return None; }
-        if index >= self.plugins.len() { return None; }
-        for (i, v) in input.iter().enumerate(){
-            self.in_buf[i] = *v;
-        }
-        let plugin = &mut self.plugins[index];
-        unsafe{
-            lilv_instance_run(plugin.instance, frames as u32);
-        }
-        Some(&self.out_buf)
-    }
+    // pub fn _apply_plugin_n_frames(&mut self, index: usize, input: &[f32]) -> Option<&[f32]>{
+    //     let frames = input.len() / 2;
+    //     if frames > self.buffer_len { return None; }
+    //     if index >= self.plugins.len() { return None; }
+    //     for (i, v) in input.iter().enumerate(){
+    //         self.in_buf[i] = *v;
+    //     }
+    //     let plugin = &mut self.plugins[index];
+    //     unsafe{
+    //         lilv_instance_run(plugin.instance, frames as u32);
+    //     }
+    //     Some(&self.out_buf)
+    // }
 
     pub fn apply_instrument(&mut self, index: usize) -> (f32, f32){
         if index >= self.plugins.len() { return (0.0, 0.0); }

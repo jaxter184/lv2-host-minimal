@@ -5,8 +5,8 @@ use lv2_urid::*;
 use std::pin::Pin;
 
 fn main() {
-    //audio_midi_instrument_test();
-    audio_process_test();
+    audio_midi_instrument_test();
+    //audio_process_test();
     println!("I didn't crash!");
 }
 
