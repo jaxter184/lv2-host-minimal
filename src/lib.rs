@@ -4,6 +4,7 @@ use std::ffi::{ CStr };
 use std::ptr;
 use std::ffi;
 use std::collections::HashMap;
+use std::pin::Pin;
 
 // find plugins in /usr/lib/lv2
 // URI list with lv2ls
@@ -23,11 +24,14 @@ pub struct Lv2Host{
     uri_home: Vec<String>,
     plugin_names: HashMap<String, usize>,
     dead_list: Vec<usize>,
+    #[allow(dead_code)]
     buffer_len: usize,
     sr: f64,
     in_buf: Vec<f32>,
     out_buf: Vec<f32>,
-    atom_buf: [u8; 1024],
+    atom_buf: Pin<Box<[u8; 1024]>>,
+    atom_seq_urid: Option<[u8; 4]>,
+    midi_type_urid: Option<[u8; 4]>,
 }
 
 #[derive(Debug)]
@@ -61,8 +65,23 @@ impl Lv2Host{
             sr: sample_rate as f64,
             in_buf: vec![0.0; buffer_len * 2], // also don't let it resize
             out_buf: vec![0.0; buffer_len * 2], // also don't let it resize
-            atom_buf: [0; 1024],
+            atom_buf: Box::pin([0; 1024]),
+            atom_seq_urid: None,
+            midi_type_urid: None,
         }
+    }
+
+    pub fn printmap(&self) {
+	    println!("pmm: {:?}", self.midi_type_urid);
+	    println!("pma: {:?}", self.atom_seq_urid);
+    }
+
+    pub fn set_maps(&mut self, map: &lv2_urid::LV2Map) {
+	    use urid::Map;
+	    self.midi_type_urid = map.map_str("http://lv2plug.in/ns/ext/midi#MidiEvent").map(|inner| inner.get().to_le_bytes());
+	    self.atom_seq_urid = map.map_str("http://lv2plug.in/ns/ext/atom#Sequence").map(|inner| inner.get().to_le_bytes());
+	    //self.midi_type_urid.unwrap();
+	    //self.atom_seq_urid.unwrap();
     }
 
     pub fn get_index(&self, name: &str) -> Option<usize>{
@@ -255,7 +274,56 @@ impl Lv2Host{
         }
         (self.out_buf[0], self.out_buf[1])
     }
+
+    pub fn apply_midi(&mut self, index: usize, input: Option<[u8; 3]>, input_frame: (f32, f32)) -> (f32, f32) {
+	    let midi_urid_bytes = self.midi_type_urid.unwrap();
+	    let atom_urid_bytes = self.atom_seq_urid.unwrap();
+	    if let Some(inner) = input {
+	    	let buffer = test_midi_atom(midi_urid_bytes, atom_urid_bytes, inner);
+		//    println!("lv2hm midi: {:?}", buffer);
+	        for (i, v) in buffer.iter().enumerate() {
+	            self.atom_buf[i] = *v;
+	        }
+	    }
+	    else {
+		    let buffer = [8,0,0,0, atom_urid_bytes[0], atom_urid_bytes[1], atom_urid_bytes[2], atom_urid_bytes[3], 0,0,0,0,0,0,0,0,];
+	        for (i, v) in buffer.iter().enumerate() {
+	            self.atom_buf[i] = *v;
+	        }
+	    };
+        if index >= self.plugins.len() { panic!() }
+        self.in_buf[0] = input_frame.0;
+        self.in_buf[1] = input_frame.1;
+        let plugin = &mut self.plugins[index];
+        unsafe {
+            lilv_instance_run(plugin.instance, 1);
+        }
+        (self.out_buf[0], self.out_buf[1])
+    }
 }
+
+fn test_midi_atom(typebytes: [u8; 4], seqbytes: [u8; 4], midibytes: [u8; 3]) -> [u8;38]{
+    [
+        // size
+        32, 0, 0, 0,
+        // type
+        seqbytes[0], seqbytes[1], seqbytes[2], seqbytes[3],
+        // timestamp
+        0,0,0,0,0,0,0,0, // frame
+        0,0,0,0,0,0,0,0, // subframe
+        // size
+        3, 0, 0, 0,
+        // type
+        typebytes[0], typebytes[1], typebytes[2], typebytes[3],
+        // midi
+        midibytes[0],
+        midibytes[1],
+        midibytes[2],
+        // 32 bit pad (not sure if this is necessary)
+        0,0,0,
+    ]
+}
+
 
 impl Drop for Lv2Host{
     fn drop(&mut self){
