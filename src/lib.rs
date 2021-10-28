@@ -23,6 +23,7 @@ pub struct Lv2Host{
     uri_home: Vec<String>,
     plugin_names: HashMap<String, usize>,
     dead_list: Vec<usize>,
+    #[allow(dead_code)]
     buffer_len: usize,
     sr: f64,
     in_buf: Vec<f32>,
@@ -69,9 +70,17 @@ impl Lv2Host{
         }
     }
 
-    pub fn set_maps(&mut self, map: &LV2Map) {
+    pub fn printmap(&self) {
+	    println!("pmm: {:?}", self.midi_type_urid);
+	    println!("pma: {:?}", self.atom_seq_urid);
+    }
+
+    pub fn set_maps(&mut self, map: &lv2_urid::LV2Map) {
+	    use urid::Map;
 	    self.midi_type_urid = map.map_str("http://lv2plug.in/ns/ext/midi#MidiEvent").map(|inner| inner.get().to_le_bytes());
 	    self.atom_seq_urid = map.map_str("http://lv2plug.in/ns/ext/atom#Sequence").map(|inner| inner.get().to_le_bytes());
+	    self.midi_type_urid.unwrap();
+	    self.atom_seq_urid.unwrap();
     }
 
     pub fn get_index(&self, name: &str) -> Option<usize>{
@@ -266,10 +275,8 @@ impl Lv2Host{
     }
 
     pub fn apply_midi(&mut self, index: usize, input: Option<[u8; 3]>, input_frame: (f32, f32)) -> (f32, f32) {
-	    let midi_type_urid = self.midi_type_urid.unwrap();
-	    let atom_seq_urid = self.atom_seq_urid.unwrap();
-	    let midi_urid_bytes = midi_type_urid.get().to_le_bytes();
-	    let atom_urid_bytes = atom_seq_urid.get().to_le_bytes();
+	    let midi_urid_bytes = self.midi_type_urid.unwrap();
+	    let atom_urid_bytes = self.atom_seq_urid.unwrap();
 	    if let Some(inner) = input {
 	    	let buffer = test_midi_atom(midi_urid_bytes, atom_urid_bytes, inner);
 		    println!("lv2hm midi: {:?}", buffer);
