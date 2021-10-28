@@ -6,6 +6,9 @@ use std::ffi;
 use std::collections::HashMap;
 use std::pin::Pin;
 
+use urid::*;
+use lv2_urid::*;
+
 // find plugins in /usr/lib/lv2
 // URI list with lv2ls
 // https://docs.rs/lilv-sys/0.2.1/lilv_sys/index.html
@@ -30,8 +33,13 @@ pub struct Lv2Host{
     in_buf: Vec<f32>,
     out_buf: Vec<f32>,
     atom_buf: Pin<Box<[u8; 1024]>>,
-    atom_seq_urid: Option<[u8; 4]>,
-    midi_type_urid: Option<[u8; 4]>,
+    atom_urid_bytes: [u8; 4],
+    midi_urid_bytes: [u8; 4],
+	#[allow(dead_code)]
+	host_map: Pin<Box<HostMap<HashURIDMapper>>>,
+	pub map_interface: lv2_sys::LV2_URID_Map,
+//	feature_vec: Pin<Vec<lv2_raw::core::LV2Feature>>,
+//	features: Pin<Vec<*const lv2_raw::core::LV2Feature>>,
 }
 
 #[derive(Debug)]
@@ -47,6 +55,13 @@ pub enum AddPluginError{
 
 impl Lv2Host{
     pub fn new(plugin_cap: usize, buffer_len: usize, sample_rate: usize) -> Self{
+	    // setup feature map
+		let mut host_map: Pin<Box<HostMap<HashURIDMapper>>> = Box::pin(HashURIDMapper::new().into());
+		let map_interface = host_map.as_mut().make_map_interface();
+		let map = LV2Map::new(&map_interface);
+	    let midi_urid_bytes = map.map_str("http://lv2plug.in/ns/ext/midi#MidiEvent").unwrap().get().to_le_bytes();
+	    let atom_urid_bytes = map.map_str("http://lv2plug.in/ns/ext/atom#Sequence").unwrap().get().to_le_bytes();
+
         let (world, lilv_plugins) = unsafe{
             let world = lilv_world_new();
             lilv_world_load_all(world);
@@ -66,22 +81,13 @@ impl Lv2Host{
             in_buf: vec![0.0; buffer_len * 2], // also don't let it resize
             out_buf: vec![0.0; buffer_len * 2], // also don't let it resize
             atom_buf: Box::pin([0; 1024]),
-            atom_seq_urid: None,
-            midi_type_urid: None,
+            atom_urid_bytes,
+            midi_urid_bytes,
+            host_map,
+        //    feature_vec,
+        //    features,
+            map_interface,
         }
-    }
-
-    pub fn printmap(&self) {
-	    println!("pmm: {:?}", self.midi_type_urid);
-	    println!("pma: {:?}", self.atom_seq_urid);
-    }
-
-    pub fn set_maps(&mut self, map: &lv2_urid::LV2Map) {
-	    use urid::Map;
-	    self.midi_type_urid = map.map_str("http://lv2plug.in/ns/ext/midi#MidiEvent").map(|inner| inner.get().to_le_bytes());
-	    self.atom_seq_urid = map.map_str("http://lv2plug.in/ns/ext/atom#Sequence").map(|inner| inner.get().to_le_bytes());
-	    //self.midi_type_urid.unwrap();
-	    //self.atom_seq_urid.unwrap();
     }
 
     pub fn get_index(&self, name: &str) -> Option<usize>{
@@ -89,7 +95,15 @@ impl Lv2Host{
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn add_plugin(&mut self, uri: &str, name: String, features_ptr: *const *const lv2_raw::core::LV2Feature) -> Result<(), AddPluginError>{
+    pub fn add_plugin(&mut self, uri: &str, name: String) -> Result<(), AddPluginError>{
+		let feature_vec = vec![lv2_raw::core::LV2Feature {
+			uri: LV2_URID_MAP.as_ptr() as *const i8,
+			data: &mut self.map_interface as *mut lv2_sys::LV2_URID_Map as *mut std::ffi::c_void,
+		}];
+		let mapfp = feature_vec.as_ptr() as *const lv2_raw::core::LV2Feature;
+		let features = vec![mapfp, std::ptr::null::<lv2_raw::core::LV2Feature>()];
+
+		let features_ptr = features.as_ptr() as *const *const lv2_raw::core::LV2Feature;
         let replace_index = self.dead_list.pop();
         if self.plugins.len() == self.plugin_cap && replace_index == None{
             return Err(AddPluginError::CapacityReached);
@@ -276,17 +290,15 @@ impl Lv2Host{
     }
 
     pub fn apply_midi(&mut self, index: usize, input: Option<[u8; 3]>, input_frame: (f32, f32)) -> (f32, f32) {
-	    let midi_urid_bytes = self.midi_type_urid.unwrap();
-	    let atom_urid_bytes = self.atom_seq_urid.unwrap();
 	    if let Some(inner) = input {
-	    	let buffer = test_midi_atom(midi_urid_bytes, atom_urid_bytes, inner);
+	    	let buffer = test_midi_atom(self.midi_urid_bytes, self.atom_urid_bytes, inner);
 		//    println!("lv2hm midi: {:?}", buffer);
 	        for (i, v) in buffer.iter().enumerate() {
 	            self.atom_buf[i] = *v;
 	        }
 	    }
 	    else {
-		    let buffer = [8,0,0,0, atom_urid_bytes[0], atom_urid_bytes[1], atom_urid_bytes[2], atom_urid_bytes[3], 0,0,0,0,0,0,0,0,];
+		    let buffer = [8,0,0,0, self.atom_urid_bytes[0], self.atom_urid_bytes[1], self.atom_urid_bytes[2], self.atom_urid_bytes[3], 0,0,0,0,0,0,0,0,];
 	        for (i, v) in buffer.iter().enumerate() {
 	            self.atom_buf[i] = *v;
 	        }
