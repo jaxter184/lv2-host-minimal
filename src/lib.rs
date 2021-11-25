@@ -95,7 +95,7 @@ impl Lv2Host{
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn add_plugin(&mut self, uri: &str, name: String) -> Result<(), AddPluginError>{
+    pub fn add_plugin(&mut self, uri: &str, name: String) -> Result<usize, AddPluginError>{
 		let feature_vec = vec![lv2_raw::core::LV2Feature {
 			uri: LV2_URID_MAP.as_ptr() as *const i8,
 			data: &mut self.map_interface as *mut lv2_sys::LV2_URID_Map as *mut std::ffi::c_void,
@@ -180,7 +180,7 @@ impl Lv2Host{
             self.plugin_names.insert(name, self.plugins.len() - 1);
         }
 
-        Ok(())
+        Ok(self.plugins.len() - 1)
     }
 
     pub fn remove_plugin(&mut self, name: &str) -> bool{
