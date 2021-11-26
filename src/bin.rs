@@ -7,7 +7,6 @@ fn main() {
 }
 
 fn audio_midi_instrument_test(){
-//    println!("{}", old_host.features_ptr as usize);
     let mut host = Lv2Host::new(1, 1, 44100);
     host.add_plugin("http://calf.sourceforge.net/plugins/Monosynth", "Organ".to_owned()).expect("Lv2hm: could not add plugin");
     host.set_value("Organ", "MIDI Channel", 0.0);
@@ -18,8 +17,7 @@ fn audio_midi_instrument_test(){
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
-//    println!("{}", old_host.features_ptr as usize);
-//    println!("{}", host.features_ptr as usize);
+
     let mut writer = hound::WavWriter::create("midi-outp.wav", spec).unwrap();
     for i in 0..44100 {
         // alternate midi on and off messages, 5000 samples apart
