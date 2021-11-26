@@ -38,11 +38,9 @@ pub struct Lv2Host{
     #[allow(dead_code)]
     host_map: Pin<Box<HostMap<HashURIDMapper>>>,
     pub map_interface: lv2_sys::LV2_URID_Map,
-//    feature_vec: Pin<Vec<lv2_raw::core::LV2Feature>>,
-//    features: Pin<Vec<*const lv2_raw::core::LV2Feature>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AddPluginError{
     CapacityReached,
     MoreThanTwoInOrOutAudioPorts(usize, usize),
@@ -51,6 +49,13 @@ pub enum AddPluginError{
     PluginIsNull,
     PortNeitherInputOrOutput,
     PortNeitherControlOrAudioOrOptional,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ApplyError{
+    PluginIndexOutOfBound,
+    LeftRightInputLenUnequal,
+    MoreFramesThanBufferLen,
 }
 
 impl Lv2Host{
@@ -84,8 +89,6 @@ impl Lv2Host{
             atom_urid_bytes,
             midi_urid_bytes,
             host_map,
-        //    feature_vec,
-        //    features,
             map_interface,
         }
     }
@@ -119,10 +122,7 @@ impl Lv2Host{
         };
 
         let (mut ports, port_names, n_audio_in, n_audio_out, n_atom_in) = unsafe {
-            match create_ports(self.world, plugin) {
-                Ok(x) => x,
-                Err(e) => { return Err(e); },
-            }
+            create_ports(self.world, plugin)?
         };
 
         if n_audio_in > 2 || n_audio_out > 2 {
@@ -251,39 +251,31 @@ impl Lv2Host{
         }
     }
 
-    pub fn apply_plugin(&mut self, index: usize, input_frame: (f32, f32)) -> (f32, f32){
+    pub fn apply(&mut self, index: usize, input: [u8; 3], input_frame: (f32, f32)) -> (f32, f32) {
         if index >= self.plugins.len() { return (0.0, 0.0); }
-        let plugin = &mut self.plugins[index];
         self.in_buf[0] = input_frame.0;
         self.in_buf[1] = input_frame.1;
+        let plugin = &mut self.plugins[index];
+        midi_into_atom_buffer(self.midi_urid_bytes, self.atom_urid_bytes, vec![(0, input)], &mut self.atom_buf);
         unsafe {
             lilv_instance_run(plugin.instance, 1);
         }
         (self.out_buf[0], self.out_buf[1])
     }
 
-    pub fn apply_midi(&mut self, index: usize, input: [u8; 3], input_frame: (f32, f32)) -> (f32, f32) {
-        test_midi_atom(self.midi_urid_bytes, self.atom_urid_bytes, vec![(0,input)], &mut self.atom_buf);
-        if index >= self.plugins.len() { panic!() }
-        self.in_buf[0] = input_frame.0;
-        self.in_buf[1] = input_frame.1;
-        let plugin = &mut self.plugins[index];
-        unsafe {
-            lilv_instance_run(plugin.instance, 1);
-        }
-        (self.out_buf[0], self.out_buf[1])
-    }
-
-    pub fn process(&mut self, index: usize, input: Vec<(u64, [u8; 3])>, input_frame: [&[f32]; 2]) -> Result<[&[f32]; 2], ()>{
-        test_midi_atom(self.midi_urid_bytes, self.atom_urid_bytes, input, &mut self.atom_buf);
-        if index >= self.plugins.len() { return Err(()); }
+    pub fn apply_multi(&mut self, index: usize, input: Vec<(u64, [u8; 3])>, input_frame: [&[f32]; 2]) -> Result<[&[f32]; 2], ApplyError>{
+        midi_into_atom_buffer(self.midi_urid_bytes, self.atom_urid_bytes, input, &mut self.atom_buf);
+        if index >= self.plugins.len() { return Err(ApplyError::PluginIndexOutOfBound); }
         let frames = input_frame[0].len();
-        if frames != input_frame[1].len() || frames > self.buffer_len {
-            return Err(());
+        if frames != input_frame[1].len(){
+            return Err(ApplyError::LeftRightInputLenUnequal);
+        }
+        if frames > self.buffer_len{
+            return Err(ApplyError::MoreFramesThanBufferLen);
         }
         for (i, (l, r)) in input_frame[0].iter().zip(input_frame[1].iter()).enumerate(){
             self.in_buf[i] = *l;
-            self.in_buf[i+self.buffer_len] = *r;
+            self.in_buf[i + self.buffer_len] = *r;
         }
         let plugin = &mut self.plugins[index];
         unsafe{
@@ -293,9 +285,9 @@ impl Lv2Host{
     }
 }
 
-fn test_midi_atom(typebytes: [u8; 4], seqbytes: [u8; 4], midibytes: Vec<(u64, [u8; 3])>, atom_buf: &mut [u8; 1024]) {
+fn midi_into_atom_buffer(typebytes: [u8; 4], seqbytes: [u8; 4], midibytes: Vec<(u64, [u8; 3])>, atom_buf: &mut [u8; 1024]) {
     // size gets written at the end
-    //self.atom_buf[0..4] = [8,0,0,0];
+    // SELF.ATOM_BUF[0..4] = [8,0,0,0];
     let mut pos = 4; // current offset
     // type
     copy_bytes(atom_buf, &seqbytes, &mut pos); // type: sequence

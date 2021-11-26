@@ -30,7 +30,7 @@ fn audio_midi_instrument_test(){
         else if (i % 5000) == 0 {
             midimsg.push((0, [0x80, 72, 96]))
         }
-        let out = host.process(0, midimsg, [&[0.0], &[0.0]]).unwrap();
+        let out = host.apply_multi(0, midimsg, [&[0.0], &[0.0]]).unwrap();
         let amplitude = i16::MAX as f32;
         writer.write_sample((out[0][0] * amplitude) as i16).unwrap();
         writer.write_sample((out[1][0] * amplitude) as i16).unwrap();
@@ -69,8 +69,8 @@ fn audio_process_test(){
         if s.is_err() { continue; }
         let r = s.unwrap() as f32 / i16::MAX.abs() as f32;
 
-        let (l, r) = host.apply_plugin(0, (l,r));
-        let (l, r) = host.apply_plugin(1, (l,r));
+        let (l, r) = host.apply(0, [0, 0, 0], (l, r));
+        let (l, r) = host.apply(1, [0, 0, 0], (l, r));
         writer.write_sample((l * i16::MAX.abs() as f32) as i16)
             .expect("Error: could not write sample");
         writer.write_sample((r * i16::MAX.abs() as f32) as i16)
