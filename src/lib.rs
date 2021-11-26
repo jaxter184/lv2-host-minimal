@@ -32,7 +32,7 @@ pub struct Lv2Host{
     sr: f64,
     in_buf: Vec<f32>,
     out_buf: Vec<f32>,
-    atom_buf: Pin<Box<[u8; 1024]>>,
+    atom_buf: [u8; 1024],
     atom_urid_bytes: [u8; 4],
     midi_urid_bytes: [u8; 4],
     #[allow(dead_code)]
@@ -80,7 +80,7 @@ impl Lv2Host{
             sr: sample_rate as f64,
             in_buf: vec![0.0; buffer_len * 2], // also don't let it resize
             out_buf: vec![0.0; buffer_len * 2], // also don't let it resize
-            atom_buf: Box::pin([0; 1024]),
+            atom_buf: [0; 1024],
             atom_urid_bytes,
             midi_urid_bytes,
             host_map,
