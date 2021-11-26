@@ -4,10 +4,7 @@ Is not meant to support any kind of GUI.
 
 - [x] Host fx plugins (audio in, audio out)
 - [x] Set parameters
-- [ ] Host midi instrumenst (midi in, audio out)
-
-I could not get midi going.
-You can see me trying in lib.rs
+- [x] Host midi instruments (midi in, audio out)
 
 ```rust
 // set up a host with max 1000 plugins and a buffer length of 1
