@@ -8,6 +8,9 @@ use std::pin::Pin;
 
 use urid::*;
 use lv2_urid::*;
+use lv2_atom::atom_prelude::{AtomWriteError, AlignedVec, AtomSpace, SpaceWriter};
+use lv2_atom::prelude::Sequence;
+use lv2_midi::prelude::MidiEvent;
 
 // find plugins in /usr/lib/lv2
 // URI list with lv2ls
@@ -30,11 +33,11 @@ pub struct Lv2Host{
     #[allow(dead_code)]
     buffer_len: usize,
     sr: f64,
-    in_buf: Vec<f32>,
-    out_buf: Vec<f32>,
-    atom_buf: [u8; 1024],
-    atom_urid_bytes: [u8; 4],
-    midi_urid_bytes: [u8; 4],
+    in_buf: Box<[f32]>,
+    out_buf: Box<[f32]>,
+    atom_buf: Box<AtomSpace>,
+    seq_urid: URID<Sequence>,
+    midi_urid: URID<MidiEvent>,
     #[allow(dead_code)]
     host_map: Pin<Box<HostMap<HashURIDMapper>>>,
     pub map_interface: lv2_sys::LV2_URID_Map,
@@ -56,6 +59,7 @@ pub enum ApplyError{
     PluginIndexOutOfBound,
     LeftRightInputLenUnequal,
     MoreFramesThanBufferLen,
+    AtomWriteError(AtomWriteError)
 }
 
 impl Lv2Host{
@@ -64,8 +68,6 @@ impl Lv2Host{
         let mut host_map: Pin<Box<HostMap<HashURIDMapper>>> = Box::pin(HashURIDMapper::new().into());
         let map_interface = host_map.as_mut().make_map_interface();
         let map = LV2Map::new(&map_interface);
-        let midi_urid_bytes = map.map_str("http://lv2plug.in/ns/ext/midi#MidiEvent").unwrap().get().to_le_bytes();
-        let atom_urid_bytes = map.map_str("http://lv2plug.in/ns/ext/atom#Sequence").unwrap().get().to_le_bytes();
 
         let (world, lilv_plugins) = unsafe{
             let world = lilv_world_new();
@@ -83,11 +85,11 @@ impl Lv2Host{
             dead_list: Vec::new(),
             buffer_len,
             sr: sample_rate as f64,
-            in_buf: vec![0.0; buffer_len * 2], // also don't let it resize
-            out_buf: vec![0.0; buffer_len * 2], // also don't let it resize
-            atom_buf: [0; 1024],
-            atom_urid_bytes,
-            midi_urid_bytes,
+            in_buf: vec![0.0; buffer_len * 2].into_boxed_slice(), // also don't let it resize
+            out_buf: vec![0.0; buffer_len * 2].into_boxed_slice(), // also don't let it resize
+            atom_buf: AlignedVec::new_with_capacity(1024).into_boxed_space(), // also don't let it resize
+            midi_urid: map.map_type().unwrap(),
+            seq_urid: map.map_type().unwrap(),
             host_map,
             map_interface,
         }
@@ -154,7 +156,7 @@ impl Lv2Host{
                         }
                     },
                     PortType::Atom => {
-                        lilv_instance_connect_port(instance, p.index, self.atom_buf.as_ptr() as *mut ffi::c_void);
+                        lilv_instance_connect_port(instance, p.index, self.atom_buf.as_bytes().as_ptr() as *mut ffi::c_void);
                     }
                     PortType::Other => {
                         lilv_instance_connect_port(instance, p.index, ptr::null_mut());
@@ -256,7 +258,8 @@ impl Lv2Host{
         self.in_buf[0] = input_frame.0;
         self.in_buf[1] = input_frame.1;
         let plugin = &mut self.plugins[index];
-        midi_into_atom_buffer(self.midi_urid_bytes, self.atom_urid_bytes, vec![(0, input)], &mut self.atom_buf);
+        midi_into_atom_buffer(self.seq_urid, self.midi_urid, &[(0, input)], &mut self.atom_buf).unwrap();
+
         unsafe {
             lilv_instance_run(plugin.instance, 1);
         }
@@ -264,7 +267,9 @@ impl Lv2Host{
     }
 
     pub fn apply_multi(&mut self, index: usize, input: Vec<(u64, [u8; 3])>, input_frame: [&[f32]; 2]) -> Result<[&[f32]; 2], ApplyError>{
-        midi_into_atom_buffer(self.midi_urid_bytes, self.atom_urid_bytes, input, &mut self.atom_buf);
+        midi_into_atom_buffer(self.seq_urid, self.midi_urid, &input, &mut self.atom_buf)
+            .map_err(ApplyError::AtomWriteError)?;
+
         if index >= self.plugins.len() { return Err(ApplyError::PluginIndexOutOfBound); }
         let frames = input_frame[0].len();
         if frames != input_frame[1].len(){
@@ -285,40 +290,18 @@ impl Lv2Host{
     }
 }
 
-fn midi_into_atom_buffer(typebytes: [u8; 4], seqbytes: [u8; 4], midibytes: Vec<(u64, [u8; 3])>, atom_buf: &mut [u8; 1024]) {
-    // size gets written at the end
-    // SELF.ATOM_BUF[0..4] = [8,0,0,0];
-    let mut pos = 4; // current offset
-    // type
-    copy_bytes(atom_buf, &seqbytes, &mut pos); // type: sequence
-    copy_bytes(atom_buf, &[0,0,0,0,0,0,0,0,], &mut pos); // frame
+fn midi_into_atom_buffer(seq_type: URID<Sequence>, midi_type: URID<MidiEvent>, midibytes: &[(u64, [u8; 3])], atom_buf: &mut AtomSpace) -> Result<(), AtomWriteError> {
+    let mut cursor = atom_buf.write();
+    let mut sequence = cursor.write_atom(seq_type)?.with_frame_unit()?;
 
     for (ea_time, ea_midi) in midibytes {
-        // timestamp
-        copy_bytes(atom_buf, &ea_time.to_le_bytes(), &mut pos); // subframe
-
-        copy_bytes(atom_buf, &3_u32.to_le_bytes(), &mut pos); // size
-        copy_bytes(atom_buf, &typebytes, &mut pos); // type: midi
-        copy_bytes(atom_buf, &ea_midi, &mut pos);
-        let extra = 8 - (pos % 8);
-        if extra != 8 {
-            for idx in 0..extra {
-                atom_buf[pos..][idx] = 0;
-            }
-            pos += extra;
-        }
+        sequence
+            .new_event(*ea_time as i64, midi_type)?
+            .write_bytes(ea_midi)?;
     }
-    pos -= 8; // length shouldn't include size and type of top-level atom
-    copy_bytes(atom_buf, &(pos as u32).to_le_bytes(), &mut 0); // size
-}
 
-fn copy_bytes(to: &mut [u8], from: &[u8], at: &mut usize) {
-    for (to, from) in to[*at..].iter_mut().zip(from.iter()) {
-        *to = *from;
-    }
-    *at += from.len();
+    Ok(())
 }
-
 
 impl Drop for Lv2Host{
     fn drop(&mut self){
